@@ -1,0 +1,1273 @@
+Z80ASM SuperFast Relocating Macro Assembler     	    Z80ASM 1.30 Page   1
+MSMONR21Z80
+
+    1                   ;
+    2                   ;	MS monitor Version 2.1 for SBC-200
+    3                   ;	Resurrected on 08/14/91
+    4                   ;	Restored to standard 08/28/91  09:54 pm
+    5                   ;	Modified for SBC-100 10/09/25  07:59 pm
+    6                   ;
+    7                   ;	Assemble with Z80ASM.COM by SLR Systems
+    8                   ;	z80asm MSMONR21/hf
+    9                   ;
+   10                   ;	General equates
+   11                   ;
+   12         FF60      SBUFF	EQU	0FF60H		;buffer
+   13         FFC0      STKTOP	EQU	0FFC0H		;stack top
+   14         FFC1      BKBUFF	EQU	STKTOP+1H	;storage of original program data
+   15         FFC4      BKADDR	EQU	STKTOP+4H	;breakpoint address storage
+   16         FFC6      MNFLG1	EQU	STKTOP+6H	;monitor flag 1
+   17         FFC7      PARMCT	EQU	STKTOP+7H	;parameters input counter
+   18         FFC8      CHARIN	EQU	STKTOP+8H	;character inputted
+   19         FFC9      SFFC9	EQU	STKTOP+9H	;byte storage
+   20         FFD0      BUF0	EQU	STKTOP+10H	;parameter storage
+   21         FFD1      BUF01	EQU	BUF0+1
+   22         FFD2      BUF02	EQU	BUF0+2		;etc.
+   23         FFD4      BUF04	EQU	BUF0+4
+   24         FFD5      BUF05	EQU	BUF0+5
+   25         FFD6      BUF06	EQU	BUF0+6
+   26         FFD8      BUF08	EQU	BUF0+8
+   27         FFE4      TEMPSP	EQU	BUF0+14H	;temp stack save
+   28         FFE6      BRKSP	EQU	BUF0+16H	;breakpoint sp storage
+   29                   ;
+   30                   ;	The follow -> notations are used to indicate where
+   31                   ;	the cpu registers are stored for breakpoints
+   32                   ;
+   33         FFE8      RSTSTK	EQU	BUF0+18H	;restore stack
+   34                   ;				 ->IY
+   35         FFEA      SFFEA	EQU	BUF0+1AH	;->IX
+   36         FFF4      SFFF4	EQU	0FFF4H		;->HL
+   37         FFF9      SFFF9	EQU	0FFF9H
+   38         FFFA      MNFLG0	EQU	0FFFAH		;monitor flag 0 ->I
+   39         FFFC      TEMPB0	EQU	0FFFCH		;->AF
+   40         FFFD      TEMPB1	EQU	0FFFDH
+   41         FFFE      ADRBUF	EQU	0FFFEH		;word storage + ret addr
+   42                   ;
+   43                   ;	Bios entry points
+   44                   ;
+   45         F003      WBOOTE	EQU	0F003H		;warm boot
+   46         F018      HME	EQU	0F018H		;home vector
+   47         F02D      LDE	EQU	0F02DH		;load 'n' sectors
+   48         F030      SVE	EQU	0F030H		;save 'n' records
+   49         F033      FMATE	EQU	0F033H		;format vector
+   50         F03F      STDSDT	EQU	0F03FH		;start of density tables
+   51         F040      TKSPS	EQU	0F040H		;tracks per side
+   52                   ;
+   53                   ;	Base ram equates
+   54                   ;
+   55         0040      TADDR	EQU	0040H		;transfer address
+   56         0042      UNIT	EQU	0042H		;drive select
+   57         0043      SCTR	EQU	0043H		;sectors
+   58         0044      TRK	EQU	0044H		;track
+Z80ASM SuperFast Relocating Macro Assembler     	    Z80ASM 1.30 Page   2
+MSMONR21Z80
+
+   59         0045      NREC	EQU	0045H		;number of records
+   60         0046      ERMASK	EQU	0046H		;error mask
+   61         0047      ERSTAT	EQU	0047H		;error status
+   62         004D      SPSV	EQU	004DH		;stack save
+   63         004F      CICHR	EQU	004FH		;same
+   64                   ;
+   65                   ;	Port equates
+   66                   ;
+   67         0063      SELECT	EQU	063H		;disk select port
+   68         007C      CDATA	EQU	07CH		;console data
+   69         007D      CSTAT	EQU	07DH		;console status
+   70                   ;
+   71         E000      	ORG	0E000H
+   72                   ;
+   73                   ;	Entry points
+   74                   ;
+   75                   
+   76 E000  C3 E00F     START:	JP	MCOLD
+   77 E003  C3 E067     MONITR: JP	MENTRY
+   78 E006  C3 E6FD     CSE:	JP	MCONST
+   79 E009  C3 E705     CIE:	JP	MCONIN
+   80 E00C  C3 E713     COE:	JP	MCONOT
+   81                   
+   82 E00F  DB 7F       MCOLD:	IN	A,(7FH)
+   83 E011  21 FF60     	LD	HL,SBUFF
+   84 E014  22 FFE6     	LD	(BRKSP),HL
+   85 E017  AF          	XOR	A
+   86 E018  32 FFC0     	LD	(STKTOP),A
+   87 E01B  3E 4E       	LD	A,4EH
+   88 E01D  D3 7D       	OUT	(CSTAT),A
+   89 E01F  3E 37       	LD	A,37H
+   90 E021  D3 7D       	OUT	(CSTAT),A
+   91 E023  3E 05       	LD	A,05H
+   92 E025  D3 78       	OUT	(78H),A
+   93 E027  0E 7D       	LD	C,7DH
+   94 E029  11 0001     	LD	DE,0001H
+   95 E02C  ED 78       WAIT0:	IN	A,(C)		;On the SBC-100, RXD is connected
+   96 E02E  F2 E02C     	JP	P,WAIT0		;  to DSR. When a start bit is
+   97 E031  13          WAIT1:	INC	DE		;  received, DSR goes high and
+   98 E032  ED 78       	IN	A,(C)		;  DE is incremented until it
+   99 E034  FA E031     	JP	M,WAIT1		;  goes low.
+  100 E037  31 E04F     	LD	SP,MONST+1
+  101 E03A  33          FINDBC: INC	SP
+  102 E03B  E1          	POP	HL
+  103 E03C  37          	SCF	
+  104 E03D  ED 52       	SBC	HL,DE
+  105 E03F  38 F9       	JR	C,FINDBC
+  106 E041  3B          	DEC	SP
+  107 E042  F1          	POP	AF
+  108 E043  D3 78       	OUT	(78H),A
+  109 E045  3E 64       	LD	A,64H
+  110 E047  06 C8       MCLOOP: LD	B,0C8H
+  111 E049  10 FE       CLLOOP: DJNZ	CLLOOP
+  112 E04B  3D          	DEC	A
+  113 E04C  20 F9       	JR	NZ,MCLOOP
+  114 E04E  18 15       MONST:	JR	RDETRY
+  115                   ;
+  116                   ;	table is used in startup to
+Z80ASM SuperFast Relocating Macro Assembler     	    Z80ASM 1.30 Page   3
+MSMONR21Z80
+
+  117                   ;	determine baud rate by measuring
+  118                   ;       the length of the start bit
+  119                   ;
+  120 E050  0D 00 01    	DB	0DH, 00H,01H		;9600
+  121 E053  1A 00 02    	DB	1AH, 00H,02H		;4800
+  122 E056  34 00 04    	DB	34H, 00H,04H		;2400
+  123 E059  68 00 08    	DB	68H, 00H,08H		;1200
+  124 E05C  D0 00 10    	DB	0D0H,00H,10H		;600
+  125 E05F  A0 01 20    	DB	0A0H,01H,20H		;300
+  126 E062  FF 7F 57    	DB	0FFH,7FH,57H		;110
+  127                   
+  128 E065  DB 7C       RDETRY: IN	A,(CDATA)		      ;no wait for keyin
+  129 E067  AF          MENTRY: XOR	A			;in this section
+  130 E068  32 FFFA     	LD	(MNFLG0),A
+  131 E06B  3C          	INC	A
+  132 E06C  32 FFC6     	LD	(MNFLG1),A
+  133 E06F  31 FFC0     MONRUN: LD	SP,STKTOP
+  134 E072  CD E71D     	CALL	CRLF
+  135 E075  0E 2E       	LD	C,2EH
+  136 E077  CD E00C     	CALL	COE
+  137 E07A  CD E70F     	CALL	CHRINE
+  138 E07D  FE 2E       	CP	2EH
+  139 E07F  28 EE       	JR	Z,MONRUN
+  140 E081  C5          	PUSH	BC
+  141 E082  CD E727     	CALL	SPACE
+  142 E085  CD E7A4     	CALL	BUFINP
+  143 E088  C1          	POP	BC
+  144 E089  79          	LD	A,C
+  145 E08A  21 E06F     	LD	HL,MONRUN
+  146 E08D  E5          	PUSH	HL
+  147 E08E  2A FFD2     	LD	HL,(BUF02)
+  148 E091  ED 5B FFD0  	LD	DE,(BUF0)
+  149 E095  FD 21 FFC0  	LD	IY,STKTOP
+  150 E099  FE 42       	CP	42H
+  151 E09B  20 3C       	JR	NZ,CHGCMD
+  152                   ;
+  153                   ;	Break command
+  154                   ;
+  155 E09D  D5          ISBCMD: PUSH	DE
+  156 E09E  3A FFC0     	LD	A,(STKTOP)
+  157 E0A1  CB 47       	BIT	0,A
+  158 E0A3  28 10       	JR	Z,BCCMPM
+  159 E0A5  ED 5B FFC4  	LD	DE,(BKADDR)
+  160 E0A9  21 FFC1     	LD	HL,BKBUFF
+  161 E0AC  01 0003     	LD	BC,0003H
+  162 E0AF  ED B0       	LDIR	
+  163 E0B1  AF          	XOR	A
+  164 E0B2  32 FFC0     	LD	(STKTOP),A
+  165 E0B5  3A FFC7     BCCMPM: LD	A,(PARMCT)
+  166 E0B8  A7          	AND	A
+  167 E0B9  E1          	POP	HL
+  168 E0BA  28 19       	JR	Z,BCMEND
+  169 E0BC  22 FFC4     SETBRK: LD	(BKADDR),HL
+  170 E0BF  E5          	PUSH	HL
+  171 E0C0  11 FFC1     	LD	DE,BKBUFF
+  172 E0C3  01 0003     	LD	BC,0003H
+  173 E0C6  C5          	PUSH	BC
+  174 E0C7  ED B0       	LDIR	
+Z80ASM SuperFast Relocating Macro Assembler     	    Z80ASM 1.30 Page   4
+MSMONR21Z80
+
+  175 E0C9  21 E0D6     	LD	HL,BKPTJP
+  176 E0CC  C1          	POP	BC
+  177 E0CD  D1          	POP	DE
+  178 E0CE  ED B0       	LDIR	
+  179 E0D0  3E 01       	LD	A,01H
+  180 E0D2  32 FFC0     	LD	(STKTOP),A
+  181 E0D5  C9          BCMEND: RET	
+  182 E0D6  C3 E5C1     BKPTJP: JP	SAVMST
+  183                   ;
+  184                   ;	Go command
+  185                   ;
+  186 E0D9  FE 47       CHGCMD: CP	47H
+  187 E0DB  20 13       	JR	NZ,CHRCMD
+  188 E0DD  3A FFC7     	LD	A,(PARMCT)
+  189 E0E0  A7          	AND	A
+  190 E0E1  28 05       	JR	Z,GCMD0
+  191 E0E3  ED 53 FFFE  	LD	(ADRBUF),DE
+  192 E0E7  F1          	POP	AF
+  193 E0E8  3E 01       GCMD0:	LD	A,01H
+  194 E0EA  32 FFC9     	LD	(SFFC9),A
+  195 E0ED  C3 E602     	JP	RESTOR
+  196                   ;
+  197                   ;	Read command
+  198                   ;
+  199 E0F0  FE 52       CHRCMD: CP	52H
+  200 E0F2  20 06       	JR	NZ,CHWCMD
+  201 E0F4  CD E104     	CALL	RWSET
+  202 E0F7  C3 F02D     	JP	LDE
+  203                   ;
+  204                   ;	Write command
+  205                   ;
+  206 E0FA  FE 57       CHWCMD: CP	57H
+  207 E0FC  20 27       	JR	NZ,CHZCMD
+  208 E0FE  CD E104     	CALL	RWSET
+  209 E101  C3 F030     	JP	SVE
+  210                   
+  211 E104  3A FFC7     RWSET:	LD	A,(PARMCT)
+  212 E107  FE 05       	CP	05H
+  213 E109  DA E437     	JP	C,BADINP
+  214 E10C  ED 53 0040  	LD	(TADDR),DE
+  215 E110  7D          	LD	A,L
+  216 E111  21 0042     	LD	HL,UNIT
+  217 E114  77          	LD	(HL),A
+  218 E115  23          	INC	HL
+  219 E116  3A FFD6     	LD	A,(BUF06)
+  220 E119  77          	LD	(HL),A
+  221 E11A  23          	INC	HL
+  222 E11B  3A FFD4     	LD	A,(BUF04)
+  223 E11E  77          	LD	(HL),A
+  224 E11F  23          	INC	HL
+  225 E120  3A FFD8     	LD	A,(BUF08)
+  226 E123  77          	LD	(HL),A
+  227 E124  C9          	RET	
+  228                   ;
+  229                   ;	Format command
+  230                   ;
+  231 E125  FE 5A       CHZCMD: CP	5AH
+  232 E127  20 45       	JR	NZ,CHQCMD
+Z80ASM SuperFast Relocating Macro Assembler     	    Z80ASM 1.30 Page   5
+MSMONR21Z80
+
+  233 E129  3A FFC7     	LD	A,(PARMCT)
+  234 E12C  3D          	DEC	A
+  235 E12D  C2 E437     	JP	NZ,BADINP
+  236 E130  7B          	LD	A,E
+  237 E131  32 0042     	LD	(UNIT),A
+  238 E134  AF          	XOR	A
+  239 E135  32 0044     	LD	(TRK),A
+  240 E138  3C          	INC	A
+  241 E139  32 0043     	LD	(SCTR),A
+  242 E13C  CD F018     	CALL	HME
+  243 E13F  DB 63       ZCMD0:	IN	A,(SELECT)
+  244 E141  F6 50       	OR	50H
+  245 E143  D3 63       	OUT	(SELECT),A
+  246 E145  CD F033     	CALL	FMATE
+  247 E148  CD E15C     	CALL	CHK5_8
+  248 E14B  28 07       	JR	Z,ZCMD1
+  249 E14D  CB A7       	RES	4,A
+  250 E14F  D3 63       	OUT	(SELECT),A
+  251 E151  CD F033     	CALL	FMATE
+  252 E154  CD E161     ZCMD1:	CALL	BMPTRK
+  253 E157  20 E6       	JR	NZ,ZCMD0
+  254 E159  C3 F018     	JP	HME
+  255                   
+  256 E15C  DB 63       CHK5_8: IN	A,(SELECT)
+  257 E15E  CB 6F       	BIT	5,A
+  258 E160  C9          	RET	
+  259                   
+  260 E161  3A 0044     BMPTRK: LD	A,(TRK)
+  261 E164  3C          	INC	A
+  262 E165  32 0044     	LD	(TRK),A
+  263 E168  47          	LD	B,A
+  264 E169  3A F040     	LD	A,(TKSPS)
+  265 E16C  B8          	CP	B
+  266 E16D  C9          	RET	
+  267                   ;
+  268                   ;	Query command
+  269                   ;
+  270 E16E  FE 51       CHQCMD: CP	51H
+  271 E170  20 34       	JR	NZ,CHMCMD
+  272 E172  7B          	LD	A,E
+  273 E173  32 0042     	LD	(UNIT),A
+  274 E176  AF          QCMD0:	XOR	A
+  275 E177  32 0044     	LD	(TRK),A
+  276 E17A  3E 01       QCMD1:	LD	A,01H
+  277 E17C  32 0043     	LD	(SCTR),A
+  278 E17F  3A F03F     	LD	A,(STDSDT)
+  279 E182  47          	LD	B,A
+  280 E183  CD E15C     	CALL	CHK5_8
+  281 E186  28 02       	JR	Z,QCMD2
+  282 E188  CB 20       	SLA	B
+  283 E18A  78          QCMD2:	LD	A,B
+  284 E18B  32 0045     	LD	(NREC),A
+  285 E18E  21 0100     	LD	HL,0100H
+  286 E191  22 0040     	LD	(TADDR),HL
+  287 E194  CD F02D     	CALL	LDE
+  288 E197  CD E5AC     	CALL	CHKPER
+  289 E19A  CD E161     	CALL	BMPTRK
+  290 E19D  20 DB       	JR	NZ,QCMD1
+Z80ASM SuperFast Relocating Macro Assembler     	    Z80ASM 1.30 Page   6
+MSMONR21Z80
+
+  291 E19F  0E 50       	LD	C,50H
+  292 E1A1  CD E00C     	CALL	COE
+  293 E1A4  18 D0       	JR	QCMD0
+  294                   ;
+  295                   ;	Move command
+  296                   ;
+  297 E1A6  FE 4D       CHMCMD: CP	4DH
+  298 E1A8  20 23       	JR	NZ,CHCCMD
+  299 E1AA  CD E5B9     	CALL	SBHLDE
+  300 E1AD  44          	LD	B,H
+  301 E1AE  4D          	LD	C,L
+  302 E1AF  EB          	EX	DE,HL
+  303 E1B0  ED 5B FFD4  	LD	DE,(BUF04)
+  304 E1B4  B7          	OR	A
+  305 E1B5  ED 52       	SBC	HL,DE
+  306 E1B7  30 0E       	JR	NC,MCMD0
+  307 E1B9  2A FFD4     	LD	HL,(BUF04)
+  308 E1BC  09          	ADD	HL,BC
+  309 E1BD  2B          	DEC	HL
+  310 E1BE  54          	LD	D,H
+  311 E1BF  5D          	LD	E,L
+  312 E1C0  2A FFD2     	LD	HL,(BUF02)
+  313 E1C3  ED B8       	LDDR	
+  314 E1C5  18 05       	JR	RETRN
+  315                   
+  316 E1C7  2A FFD0     MCMD0:	LD	HL,(BUF0)
+  317 E1CA  ED B0       	LDIR	
+  318 E1CC  C9          RETRN:	RET	
+  319                   ;
+  320                   ;	Warm boot
+  321                   ;
+  322 E1CD  FE 43       CHCCMD: CP	43H
+  323 E1CF  CA F003     	JP	Z,WBOOTE
+  324 E1D2  FE 48       CHHCMD: CP	48H
+  325 E1D4  20 1D       	JR	NZ,CHXCMD
+  326                   ;
+  327                   ;	Hex math command
+  328                   ;
+  329 E1D6  E5          	PUSH	HL
+  330 E1D7  19          	ADD	HL,DE
+  331 E1D8  0E 2B       	LD	C,2BH
+  332 E1DA  CD E00C     	CALL	COE
+  333 E1DD  CD E7DE     	CALL	PRNTHL
+  334 E1E0  CD E727     	CALL	SPACE
+  335 E1E3  E1          	POP	HL
+  336 E1E4  EB          	EX	DE,HL
+  337 E1E5  B7          	OR	A
+  338 E1E6  ED 52       	SBC	HL,DE
+  339 E1E8  0E 2D       	LD	C,2DH
+  340 E1EA  CD E00C     	CALL	COE
+  341 E1ED  CD E7DE     	CALL	PRNTHL
+  342 E1F0  C3 E06F     	JP	MONRUN
+  343                   ;
+  344                   ;	eXamine registers command
+  345                   ;
+  346 E1F3  FE 58       CHXCMD: CP	58H
+  347 E1F5  20 15       	JR	NZ,CHICMD
+  348 E1F7  AF          	XOR	A
+Z80ASM SuperFast Relocating Macro Assembler     	    Z80ASM 1.30 Page   7
+MSMONR21Z80
+
+  349 E1F8  BB          	CP	E
+  350 E1F9  C4 E72C     	CALL	NZ,PRREGL
+  351 E1FC  3A FFC7     	LD	A,(PARMCT)
+  352 E1FF  FE 02       	CP	02H
+  353 E201  20 06       	JR	NZ,XCMD0
+  354 E203  3A FFD2     	LD	A,(BUF02)
+  355 E206  32 FFC6     	LD	(MNFLG1),A
+  356 E209  C3 E676     XCMD0:	JP	DMPLIN
+  357                   ;
+  358                   ;	Input command
+  359                   ;
+  360 E20C  FE 49       CHICMD: CP	49H
+  361 E20E  20 36       	JR	NZ,CHOCMD
+  362 E210  FD CB 0A 86 	RES	0,(IY+10)
+  363 E214  3A FFD0     	LD	A,(BUF0)
+  364 E217  4F          	LD	C,A
+  365 E218  06 01       	LD	B,01H
+  366 E21A  3A FFC7     	LD	A,(PARMCT)
+  367 E21D  FE 02       	CP	02H
+  368 E21F  38 0B       	JR	C,ICMD0
+  369 E221  3A FFD2     	LD	A,(BUF02)
+  370 E224  47          	LD	B,A
+  371 E225  B7          	OR	A
+  372 E226  20 04       	JR	NZ,ICMD0
+  373 E228  FD CB 0A C6 	SET	0,(IY+10)
+  374 E22C  79          ICMD0:	LD	A,C
+  375 E22D  CD E7E3     	CALL	PRHXSP
+  376 E230  ED 78       	IN	A,(C)
+  377 E232  CD E7E3     	CALL	PRHXSP
+  378 E235  CD E5AC     	CALL	CHKPER
+  379 E238  C5          	PUSH	BC
+  380 E239  CD E71D     	CALL	CRLF
+  381 E23C  C1          	POP	BC
+  382 E23D  FD CB 0A 46 	BIT	0,(IY+10)
+  383 E241  20 E9       	JR	NZ,ICMD0
+  384 E243  10 E7       	DJNZ	ICMD0
+  385 E245  C9          	RET	
+  386                   ;
+  387                   ;	Output command
+  388                   ;
+  389 E246  FE 4F       CHOCMD: CP	4FH
+  390 E248  20 2E       	JR	NZ,CHFCMD
+  391 E24A  FD CB 0A 86 	RES	0,(IY+10)
+  392 E24E  3A FFD0     	LD	A,(BUF0)
+  393 E251  4F          	LD	C,A
+  394 E252  3A FFD2     	LD	A,(BUF02)
+  395 E255  57          	LD	D,A
+  396 E256  06 01       	LD	B,01H
+  397 E258  3A FFC7     	LD	A,(PARMCT)
+  398 E25B  FE 03       	CP	03H
+  399 E25D  38 0B       	JR	C,OCMD0
+  400 E25F  3A FFD4     	LD	A,(BUF04)
+  401 E262  47          	LD	B,A
+  402 E263  B7          	OR	A
+  403 E264  20 04       	JR	NZ,OCMD0
+  404 E266  FD CB 0A C6 	SET	0,(IY+10)
+  405 E26A  ED 51       OCMD0:	OUT	(C),D
+  406 E26C  CD E5AC     	CALL	CHKPER
+Z80ASM SuperFast Relocating Macro Assembler     	    Z80ASM 1.30 Page   8
+MSMONR21Z80
+
+  407 E26F  FD CB 0A 46 	BIT	0,(IY+10)
+  408 E273  20 F5       	JR	NZ,OCMD0
+  409 E275  10 F3       	DJNZ	OCMD0
+  410 E277  C9          	RET	
+  411                   ;
+  412                   ;	Fill command
+  413                   ;
+  414 E278  FE 46       CHFCMD: CP	46H
+  415 E27A  20 12       	JR	NZ,CHLCMD
+  416 E27C  3A FFD4     	LD	A,(BUF04)
+  417 E27F  E5          	PUSH	HL
+  418 E280  CD E5B9     	CALL	SBHLDE
+  419 E283  E1          	POP	HL
+  420 E284  12          FCMD0:	LD	(DE),A
+  421 E285  E5          	PUSH	HL
+  422 E286  B7          	OR	A
+  423 E287  ED 52       	SBC	HL,DE
+  424 E289  E1          	POP	HL
+  425 E28A  13          	INC	DE
+  426 E28B  20 F7       	JR	NZ,FCMD0
+  427 E28D  C9          	RET	
+  428                   ;
+  429                   ;	L command
+  430                   ;
+  431 E28E  FE 4C       CHLCMD: CP	4CH
+  432 E290  20 4D       	JR	NZ,CHVCMD
+  433 E292  CD E5B9     	CALL	SBHLDE
+  434 E295  3A FFC7     	LD	A,(PARMCT)
+  435 E298  D6 03       	SUB	03H
+  436 E29A  DA E437     	JP	C,BADINP
+  437 E29D  47          	LD	B,A
+  438 E29E  3C          	INC	A
+  439 E29F  32 FFC7     	LD	(PARMCT),A
+  440 E2A2  21 FFD5     	LD	HL,BUF05
+  441 E2A5  11 FFD6     	LD	DE,BUF06
+  442 E2A8  1A          LCMD0:	LD	A,(DE)
+  443 E2A9  77          	LD	(HL),A
+  444 E2AA  23          	INC	HL
+  445 E2AB  13          	INC	DE
+  446 E2AC  13          	INC	DE
+  447 E2AD  10 F9       	DJNZ	LCMD0
+  448 E2AF  3A FFC7     LCMD1:	LD	A,(PARMCT)
+  449 E2B2  47          	LD	B,A
+  450 E2B3  2A FFD0     	LD	HL,(BUF0)
+  451 E2B6  11 FFD4     	LD	DE,BUF04
+  452 E2B9  1A          LCMD2:	LD	A,(DE)
+  453 E2BA  BE          	CP	(HL)
+  454 E2BB  20 10       	JR	NZ,LCMD3
+  455 E2BD  23          	INC	HL
+  456 E2BE  13          	INC	DE
+  457 E2BF  10 F8       	DJNZ	LCMD2
+  458 E2C1  2A FFD0     	LD	HL,(BUF0)
+  459 E2C4  CD E7DE     	CALL	PRNTHL
+  460 E2C7  CD E71D     	CALL	CRLF
+  461 E2CA  CD E5AC     	CALL	CHKPER
+  462 E2CD  2A FFD2     LCMD3:	LD	HL,(BUF02)
+  463 E2D0  ED 5B FFD0  	LD	DE,(BUF0)
+  464 E2D4  B7          	OR	A
+Z80ASM SuperFast Relocating Macro Assembler     	    Z80ASM 1.30 Page   9
+MSMONR21Z80
+
+  465 E2D5  ED 52       	SBC	HL,DE
+  466 E2D7  C8          	RET	Z
+  467 E2D8  13          	INC	DE
+  468 E2D9  ED 53 FFD0  	LD	(BUF0),DE
+  469 E2DD  18 D0       	JR	LCMD1
+  470                   ;
+  471                   ;	Verify command
+  472                   ;
+  473 E2DF  FE 56       CHVCMD: CP	56H
+  474 E2E1  20 38       	JR	NZ,CHTCMD
+  475 E2E3  CD E5B9     	CALL	SBHLDE
+  476 E2E6  E5          	PUSH	HL
+  477 E2E7  C1          	POP	BC
+  478 E2E8  EB          	EX	DE,HL
+  479 E2E9  ED 5B FFD4  	LD	DE,(BUF04)
+  480 E2ED  1A          VCMD0:	LD	A,(DE)
+  481 E2EE  ED A1       	CPI	
+  482 E2F0  13          	INC	DE
+  483 E2F1  20 03       	JR	NZ,VCMD1
+  484 E2F3  E0          	RET	PO
+  485 E2F4  18 F7       	JR	VCMD0
+  486                   
+  487 E2F6  F5          VCMD1:	PUSH	AF
+  488 E2F7  C5          	PUSH	BC
+  489 E2F8  D5          	PUSH	DE
+  490 E2F9  2B          	DEC	HL
+  491 E2FA  CD E7DE     	CALL	PRNTHL
+  492 E2FD  7E          	LD	A,(HL)
+  493 E2FE  23          	INC	HL
+  494 E2FF  CD E7E3     	CALL	PRHXSP
+  495 E302  D1          	POP	DE
+  496 E303  D5          	PUSH	DE
+  497 E304  E5          	PUSH	HL
+  498 E305  EB          	EX	DE,HL
+  499 E306  2B          	DEC	HL
+  500 E307  CD E7DE     	CALL	PRNTHL
+  501 E30A  7E          	LD	A,(HL)
+  502 E30B  CD E73B     	CALL	PRHASC
+  503 E30E  CD E71D     	CALL	CRLF
+  504 E311  E1          	POP	HL
+  505 E312  D1          	POP	DE
+  506 E313  C1          	POP	BC
+  507 E314  F1          	POP	AF
+  508 E315  E0          	RET	PO
+  509 E316  CD E5AC     	CALL	CHKPER
+  510 E319  18 D2       	JR	VCMD0
+  511                   ;
+  512                   ;	T command
+  513                   ;
+  514 E31B  FE 54       CHTCMD: CP	54H
+  515 E31D  20 3F       	JR	NZ,CHDCMD
+  516 E31F  EB          	EX	DE,HL
+  517 E320  13          	INC	DE
+  518 E321  06 00       	LD	B,00H
+  519 E323  2A FFD0     TCMD0:	LD	HL,(BUF0)
+  520 E326  7D          TCMD1:	LD	A,L
+  521 E327  AC          	XOR	H
+  522 E328  A8          	XOR	B
+Z80ASM SuperFast Relocating Macro Assembler     	    Z80ASM 1.30 Page  10
+MSMONR21Z80
+
+  523 E329  77          	LD	(HL),A
+  524 E32A  23          	INC	HL
+  525 E32B  E5          	PUSH	HL
+  526 E32C  B7          	OR	A
+  527 E32D  ED 52       	SBC	HL,DE
+  528 E32F  E1          	POP	HL
+  529 E330  20 F4       	JR	NZ,TCMD1
+  530 E332  2A FFD0     	LD	HL,(BUF0)
+  531 E335  7D          TCMD2:	LD	A,L
+  532 E336  AC          	XOR	H
+  533 E337  A8          	XOR	B
+  534 E338  BE          	CP	(HL)
+  535 E339  C4 E34F     	CALL	NZ,TCMD3
+  536 E33C  23          	INC	HL
+  537 E33D  E5          	PUSH	HL
+  538 E33E  B7          	OR	A
+  539 E33F  ED 52       	SBC	HL,DE
+  540 E341  E1          	POP	HL
+  541 E342  20 F1       	JR	NZ,TCMD2
+  542 E344  04          	INC	B
+  543 E345  CD E5AC     	CALL	CHKPER
+  544 E348  0E 50       	LD	C,50H
+  545 E34A  CD E00C     	CALL	COE
+  546 E34D  18 D4       	JR	TCMD0
+  547                   
+  548 E34F  F5          TCMD3:	PUSH	AF
+  549 E350  CD E7DE     	CALL	PRNTHL
+  550 E353  F1          	POP	AF
+  551 E354  CD E7E3     	CALL	PRHXSP
+  552 E357  7E          	LD	A,(HL)
+  553 E358  CD E7E3     	CALL	PRHXSP
+  554 E35B  C3 E71D     	JP	CRLF
+  555                   ;
+  556                   ;	Dump command
+  557                   ;
+  558 E35E  FE 44       CHDCMD: CP	44H
+  559 E360  20 5D       	JR	NZ,CHECMD
+  560 E362  FD CB 0A 86 	RES	0,(IY+10)
+  561 E366  EB          	EX	DE,HL
+  562 E367  3A FFC7     	LD	A,(PARMCT)
+  563 E36A  FE 02       	CP	02H
+  564 E36C  30 09       	JR	NC,DCMD1
+  565 E36E  11 00FF     DCMD0:	LD	DE,00FFH
+  566 E371  E5          	PUSH	HL
+  567 E372  19          	ADD	HL,DE
+  568 E373  22 FFD2     	LD	(BUF02),HL
+  569 E376  E1          	POP	HL
+  570 E377  CD E71D     DCMD1:	CALL	CRLF
+  571 E37A  E5          	PUSH	HL
+  572 E37B  C1          	POP	BC
+  573 E37C  E5          	PUSH	HL
+  574 E37D  2A FFD2     	LD	HL,(BUF02)
+  575 E380  B7          	OR	A
+  576 E381  ED 42       	SBC	HL,BC
+  577 E383  DA E437     	JP	C,BADINP
+  578 E386  01 000F     	LD	BC,000FH
+  579 E389  B7          	OR	A
+  580 E38A  ED 42       	SBC	HL,BC
+Z80ASM SuperFast Relocating Macro Assembler     	    Z80ASM 1.30 Page  11
+MSMONR21Z80
+
+  581 E38C  06 10       	LD	B,10H
+  582 E38E  28 06       	JR	Z,DCMD2
+  583 E390  D2 E39A     	JP	NC,DCMD3
+  584 E393  7D          	LD	A,L
+  585 E394  80          	ADD	A,B
+  586 E395  47          	LD	B,A
+  587 E396  FD CB 0A C6 DCMD2:	SET	0,(IY+10)
+  588 E39A  E1          DCMD3:	POP	HL
+  589 E39B  C5          	PUSH	BC
+  590 E39C  CD E7DE     	CALL	PRNTHL
+  591 E39F  C1          	POP	BC
+  592 E3A0  CD E696     	CALL	DMPDAT
+  593 E3A3  CD E5AC     	CALL	CHKPER
+  594 E3A6  FD CB 0A 46 	BIT	0,(IY+10)
+  595 E3AA  28 CB       	JR	Z,DCMD1
+  596 E3AC  CD E009     DCMD4:	CALL	CIE
+  597 E3AF  FE 2E       	CP	2EH
+  598 E3B1  C8          	RET	Z
+  599 E3B2  FE 20       	CP	20H
+  600 E3B4  20 F6       	JR	NZ,DCMD4
+  601 E3B6  FD CB 0A 86 	RES	0,(IY+10)
+  602 E3BA  CD E71D     	CALL	CRLF
+  603 E3BD  18 AF       	JR	DCMD0
+  604                   ;
+  605                   ;	Examine memory command
+  606                   ;
+  607 E3BF  FE 45       CHECMD: CP	45H
+  608 E3C1  20 38       	JR	NZ,CHPCMD
+  609 E3C3  EB          	EX	DE,HL
+  610 E3C4  CD E7DE     ECMD0:	CALL	PRNTHL
+  611 E3C7  7E          	LD	A,(HL)
+  612 E3C8  CD E73B     	CALL	PRHASC
+  613 E3CB  0E 2D       	LD	C,2DH
+  614 E3CD  CD E00C     	CALL	COE
+  615 E3D0  E5          	PUSH	HL
+  616 E3D1  CD E7A4     	CALL	BUFINP
+  617 E3D4  E1          	POP	HL
+  618 E3D5  3A FFC8     	LD	A,(CHARIN)
+  619 E3D8  FE 2E       	CP	2EH
+  620 E3DA  C8          	RET	Z
+  621 E3DB  3A FFC7     	LD	A,(PARMCT)
+  622 E3DE  E6 03       	AND	03H
+  623 E3E0  28 0F       	JR	Z,ECMD2
+  624 E3E2  3A FFD0     	LD	A,(BUF0)
+  625 E3E5  77          	LD	(HL),A
+  626 E3E6  23          	INC	HL
+  627 E3E7  3A FFC8     	LD	A,(CHARIN)
+  628 E3EA  FE 0D       	CP	0DH
+  629 E3EC  28 D6       	JR	Z,ECMD0
+  630 E3EE  2B          ECMD1:	DEC	HL
+  631 E3EF  18 D3       	JR	ECMD0
+  632                   
+  633 E3F1  3A FFC8     ECMD2:	LD	A,(CHARIN)
+  634 E3F4  FE 5E       	CP	5EH
+  635 E3F6  28 F6       	JR	Z,ECMD1
+  636 E3F8  23          	INC	HL
+  637 E3F9  18 C9       	JR	ECMD0
+  638                   ;
+Z80ASM SuperFast Relocating Macro Assembler     	    Z80ASM 1.30 Page  12
+MSMONR21Z80
+
+  639                   ;	Port read command
+  640                   ;
+  641 E3FB  FE 50       CHPCMD: CP	50H
+  642 E3FD  20 34       	JR	NZ,CHSCMD
+  643 E3FF  3A FFD0     	LD	A,(BUF0)
+  644 E402  4F          	LD	C,A
+  645 E403  79          PCMD0:	LD	A,C
+  646 E404  CD E7E3     	CALL	PRHXSP
+  647 E407  ED 78       	IN	A,(C)
+  648 E409  CD E7E3     	CALL	PRHXSP
+  649 E40C  C5          	PUSH	BC
+  650 E40D  CD E7A4     	CALL	BUFINP
+  651 E410  C1          	POP	BC
+  652 E411  3A FFC8     	LD	A,(CHARIN)
+  653 E414  FE 2E       	CP	2EH
+  654 E416  C8          	RET	Z
+  655 E417  67          	LD	H,A
+  656 E418  3A FFC7     	LD	A,(PARMCT)
+  657 E41B  A7          	AND	A
+  658 E41C  28 0D       	JR	Z,PCMD2
+  659 E41E  3A FFD0     	LD	A,(BUF0)
+  660 E421  ED 79       	OUT	(C),A
+  661 E423  3E 5E       	LD	A,5EH
+  662 E425  BC          	CP	H
+  663 E426  28 DB       	JR	Z,PCMD0
+  664 E428  0C          PCMD1:	INC	C
+  665 E429  18 D8       	JR	PCMD0
+  666                   
+  667 E42B  3E 5E       PCMD2:	LD	A,5EH
+  668 E42D  BC          	CP	H
+  669 E42E  20 F8       	JR	NZ,PCMD1
+  670 E430  0D          	DEC	C
+  671 E431  18 D0       	JR	PCMD0
+  672                   
+  673 E433  FE 53       CHSCMD: CP	53H
+  674 E435  28 08       	JR	Z,ISSCMD
+  675 E437  0E 3F       BADINP: LD	C,3FH
+  676 E439  CD E00C     	CALL	COE
+  677 E43C  C3 E06F     	JP	MONRUN
+  678                   ;
+  679                   ;	S command
+  680                   ;
+  681 E43F  F1          ISSCMD: POP	AF
+  682 E440  CD E72C     	CALL	PRREGL
+  683 E443  3A FFC7     	LD	A,(PARMCT)
+  684 E446  A7          	AND	A
+  685 E447  28 04       	JR	Z,SCMD0
+  686 E449  EB          	EX	DE,HL
+  687 E44A  22 FFFE     	LD	(ADRBUF),HL
+  688 E44D  3A FFD2     SCMD0:	LD	A,(BUF02)
+  689 E450  A7          	AND	A
+  690 E451  20 01       	JR	NZ,SCMD1
+  691 E453  3C          	INC	A
+  692 E454  32 FFC9     SCMD1:	LD	(SFFC9),A
+  693 E457  AF          	XOR	A
+  694 E458  32 FFC7     	LD	(PARMCT),A
+  695 E45B  CD E09D     	CALL	ISBCMD
+  696 E45E  ED 5B FFFE  	LD	DE,(ADRBUF)
+Z80ASM SuperFast Relocating Macro Assembler     	    Z80ASM 1.30 Page  13
+MSMONR21Z80
+
+  697 E462  1A          	LD	A,(DE)
+  698 E463  FE 40       	CP	40H
+  699 E465  38 05       	JR	C,SCMD2
+  700 E467  FE C0       	CP	0C0H
+  701 E469  DA E541     	JP	C,SCMD21
+  702 E46C  E6 03       SCMD2:	AND	03H
+  703 E46E  47          	LD	B,A
+  704 E46F  1A          	LD	A,(DE)
+  705 E470  1F          	RRA	
+  706 E471  1F          	RRA	
+  707 E472  E6 1F       	AND	1FH
+  708 E474  C5          	PUSH	BC
+  709 E475  01 E588     	LD	BC,SCDTB1
+  710 E478  81          	ADD	A,C
+  711 E479  6F          	LD	L,A
+  712 E47A  60          	LD	H,B
+  713 E47B  C1          	POP	BC
+  714 E47C  7E          	LD	A,(HL)
+  715 E47D  04          	INC	B
+  716 E47E  10 29       SCMD3:	DJNZ	SCMD5
+  717 E480  E6 03       	AND	03H
+  718 E482  CA E52C     	JP	Z,SCMD20
+  719 E485  F5          	PUSH	AF
+  720 E486  1A          	LD	A,(DE)
+  721 E487  2A FFF4     	LD	HL,(SFFF4)
+  722 E48A  FE E9       	CP	0E9H
+  723 E48C  CA E5F5     	JP	Z,SVMEND
+  724 E48F  FE C3       	CP	0C3H
+  725 E491  28 70       	JR	Z,SCMD16
+  726 E493  FE CD       	CP	0CDH
+  727 E495  28 6C       	JR	Z,SCMD16
+  728 E497  FE C9       	CP	0C9H
+  729 E499  28 5F       	JR	Z,SCMD15
+  730 E49B  FE 10       	CP	10H
+  731 E49D  20 10       	JR	NZ,SCMD6
+  732 E49F  21 FFF9     	LD	HL,SFFF9
+  733 E4A2  35          	DEC	(HL)
+  734 E4A3  20 47       	JR	NZ,SCMD12
+  735 E4A5  34          	INC	(HL)
+  736 E4A6  C3 E562     SCMD4:	JP	SCMD26
+  737                   
+  738 E4A9  CB 3F       SCMD5:	SRL	A		;Note here I just used scmd
+  739 E4AB  CB 3F       	SRL	A		;sequencing(not SHRA2) so
+  740 E4AD  18 CF       	JR	SCMD3		;all labels in scmd are 1 off
+  741                   
+  742 E4AF  FE 18       SCMD6:	CP	18H
+  743 E4B1  28 39       	JR	Z,SCMD12
+  744 E4B3  FE 80       	CP	80H
+  745 E4B5  30 0A       	JR	NC,SCMD7
+  746 E4B7  EE 20       	XOR	20H
+  747 E4B9  47          	LD	B,A
+  748 E4BA  E6 67       	AND	67H
+  749 E4BC  20 E8       	JR	NZ,SCMD4
+  750 E4BE  78          	LD	A,B
+  751 E4BF  18 0D       	JR	SCMD9
+  752                   
+  753 E4C1  E6 C7       SCMD7:	AND	0C7H
+  754 E4C3  FE C2       	CP	0C2H
+Z80ASM SuperFast Relocating Macro Assembler     	    Z80ASM 1.30 Page  14
+MSMONR21Z80
+
+  755 E4C5  28 06       	JR	Z,SCMD8
+  756 E4C7  E6 C3       	AND	0C3H
+  757 E4C9  FE C0       	CP	0C0H
+  758 E4CB  20 43       	JR	NZ,SCMD17
+  759 E4CD  1A          SCMD8:	LD	A,(DE)
+  760 E4CE  E6 30       SCMD9:	AND	30H
+  761 E4D0  21 E5A7     	LD	HL,SCDTB2
+  762 E4D3  23          SCMD10: INC	HL
+  763 E4D4  D6 10       	SUB	10H
+  764 E4D6  30 FB       	JR	NC,SCMD10
+  765 E4D8  3A FFFC     	LD	A,(TEMPB0)
+  766 E4DB  A6          	AND	(HL)
+  767 E4DC  1A          	LD	A,(DE)
+  768 E4DD  28 01       	JR	Z,SCMD11
+  769 E4DF  2F          	CPL	
+  770 E4E0  CB 5F       SCMD11: BIT	3,A
+  771 E4E2  20 C2       	JR	NZ,SCMD4
+  772 E4E4  F1          	POP	AF
+  773 E4E5  F5          	PUSH	AF
+  774 E4E6  FE 02       	CP	02H
+  775 E4E8  38 10       	JR	C,SCMD15
+  776 E4EA  20 17       	JR	NZ,SCMD16
+  777 E4EC  13          SCMD12: INC	DE
+  778 E4ED  1A          	LD	A,(DE)
+  779 E4EE  13          	INC	DE
+  780 E4EF  6F          	LD	L,A
+  781 E4F0  17          	RLA	
+  782 E4F1  26 00       	LD	H,00H
+  783 E4F3  30 01       	JR	NC,SCMD13
+  784 E4F5  25          	DEC	H
+  785 E4F6  19          SCMD13: ADD	HL,DE
+  786 E4F7  18 30       	JR	SCMD19
+  787                   
+  788 E4F9  1B          SCMD14: DEC	DE
+  789 E4FA  2A FFE6     SCMD15: LD	HL,(BRKSP)
+  790 E4FD  7E          	LD	A,(HL)
+  791 E4FE  23          	INC	HL
+  792 E4FF  66          	LD	H,(HL)
+  793 E500  6F          	LD	L,A
+  794 E501  18 64       	JR	SCMD29
+  795                   
+  796 E503  1A          SCMD16: LD	A,(DE)
+  797 E504  CB 57       	BIT	2,A
+  798 E506  13          	INC	DE
+  799 E507  1A          	LD	A,(DE)
+  800 E508  6F          	LD	L,A
+  801 E509  13          	INC	DE
+  802 E50A  1A          	LD	A,(DE)
+  803 E50B  67          	LD	H,A
+  804 E50C  20 59       	JR	NZ,SCMD29
+  805 E50E  18 19       	JR	SCMD19
+  806                   
+  807 E510  1A          SCMD17: LD	A,(DE)
+  808 E511  E6 C7       	AND	0C7H
+  809 E513  FE C7       	CP	0C7H
+  810 E515  1A          	LD	A,(DE)
+  811 E516  20 07       	JR	NZ,SCMD18
+  812 E518  E6 38       	AND	38H
+Z80ASM SuperFast Relocating Macro Assembler     	    Z80ASM 1.30 Page  15
+MSMONR21Z80
+
+  813 E51A  6F          	LD	L,A
+  814 E51B  26 00       	LD	H,00H
+  815 E51D  18 48       	JR	SCMD29
+  816                   
+  817 E51F  FE FB       SCMD18: CP	0FBH
+  818 E521  20 3F       	JR	NZ,SCMD26
+  819 E523  2F          	CPL	
+  820 E524  32 FFFA     	LD	(MNFLG0),A
+  821 E527  EB          	EX	DE,HL
+  822 E528  23          	INC	HL
+  823 E529  C3 E5F5     SCMD19: JP	SVMEND
+  824                   
+  825 E52C  1A          SCMD20: LD	A,(DE)
+  826 E52D  13          	INC	DE
+  827 E52E  FE ED       	CP	0EDH
+  828 E530  20 13       	JR	NZ,SCMD22
+  829 E532  06 03       	LD	B,03H
+  830 E534  1A          	LD	A,(DE)
+  831 E535  E6 F7       	AND	0F7H
+  832 E537  FE 45       	CP	45H
+  833 E539  28 BE       	JR	Z,SCMD14
+  834 E53B  E6 C7       	AND	0C7H
+  835 E53D  FE 43       	CP	43H
+  836 E53F  28 22       	JR	Z,SCMD27
+  837 E541  06 01       SCMD21: LD	B,01H
+  838 E543  18 1E       	JR	SCMD27
+  839                   
+  840 E545  FE DD       SCMD22: CP	0DDH
+  841 E547  2A FFEA     	LD	HL,(SFFEA)
+  842 E54A  28 03       	JR	Z,SCMD23
+  843 E54C  2A FFE8     	LD	HL,(RSTSTK)
+  844 E54F  1A          SCMD23: LD	A,(DE)
+  845 E550  FE E9       	CP	0E9H
+  846 E552  28 D5       	JR	Z,SCMD19
+  847 E554  21 E583     	LD	HL,SCDTB0
+  848 E557  01 0005     	LD	BC,0005H
+  849 E55A  ED B1       	CPIR	
+  850 E55C  20 0F       	JR	NZ,SCMD30
+  851 E55E  04          	INC	B
+  852 E55F  04          SCMD24: INC	B
+  853 E560  04          SCMD25: INC	B
+  854 E561  C5          	PUSH	BC
+  855 E562  C1          SCMD26: POP	BC
+  856 E563  EB          SCMD27: EX	DE,HL
+  857 E564  23          SCMD28: INC	HL
+  858 E565  10 FD       	DJNZ	SCMD28
+  859 E567  CD E0BC     SCMD29: CALL	SETBRK
+  860 E56A  C3 E602     	JP	RESTOR
+  861                   
+  862 E56D  E6 FE       SCMD30: AND	0FEH
+  863 E56F  FE 34       	CP	34H
+  864 E571  28 EC       	JR	Z,SCMD24
+  865 E573  1A          	LD	A,(DE)
+  866 E574  E6 07       	AND	07H
+  867 E576  FE 06       	CP	06H
+  868 E578  28 E5       	JR	Z,SCMD24
+  869 E57A  1A          	LD	A,(DE)
+  870 E57B  E6 F8       	AND	0F8H
+Z80ASM SuperFast Relocating Macro Assembler     	    Z80ASM 1.30 Page  16
+MSMONR21Z80
+
+  871 E57D  FE 70       	CP	70H
+  872 E57F  28 DE       	JR	Z,SCMD24
+  873 E581  18 DD       	JR	SCMD25
+  874                   
+  875 E583  21 22 2A 36 SCDTB0: DB	21H,22H,2AH,36H 	;!"*6
+  876 E587  CB          	DB	0CBH			;K
+  877 E588  5D 65 55 65 SCDTB1: DB	5DH,65H,55H,65H 	;]eUe
+  878 E58C  5E 65 56 65 	DB	5EH,65H,56H,65H 	;^eVe
+  879 E590  7E 65 76 65 	DB	7EH,65H,76H,65H 	;~eve
+  880 E594  7E 65 76 65 	DB	7EH,65H,76H,65H 	;~eve
+  881 E598  F5 67 B5 6F 	DB	0F5H,67H,0B5H,6FH	;ug5o
+  882 E59C  B5 67 B5 63 	DB	0B5H,67H,0B5H,63H	;5g5c
+  883 E5A0  75 67 75 63 	DB	75H,67H,75H,63H 	;uguc
+  884 E5A4  75 67 75    	DB	75H,67H,75H		;ugu
+  885 E5A7  63 40 01 04 SCDTB2: DB	63H,40H,01H,04H 	;c@..
+  886 E5AB  80          	DB	80H			;.
+  887                   
+  888 E5AC  CD E006     CHKPER: CALL	CSE
+  889 E5AF  C8          	RET	Z
+  890 E5B0  CD E009     	CALL	CIE
+  891 E5B3  FE 2E       	CP	2EH
+  892 E5B5  C0          	RET	NZ
+  893 E5B6  C3 E06F     	JP	MONRUN
+  894                   
+  895 E5B9  B7          SBHLDE: OR	A
+  896 E5BA  ED 52       	SBC	HL,DE
+  897 E5BC  DA E437     	JP	C,BADINP
+  898 E5BF  23          	INC	HL
+  899 E5C0  C9          	RET	
+  900                   
+  901 E5C1  ED 73 FFE6  SAVMST: LD	(BRKSP),SP
+  902 E5C5  31 0000     	LD	SP,0000H
+  903 E5C8  F5          	PUSH	AF
+  904 E5C9  F5          	PUSH	AF
+  905 E5CA  B7          	OR	A
+  906 E5CB  ED 57       	LD	A,I
+  907 E5CD  F5          	PUSH	AF
+  908 E5CE  F3          	DI	
+  909 E5CF  C5          	PUSH	BC
+  910 E5D0  D5          	PUSH	DE
+  911 E5D1  E5          	PUSH	HL
+  912 E5D2  D9          	EXX	
+  913 E5D3  08          	EX	AF,AF'
+  914 E5D4  F5          	PUSH	AF
+  915 E5D5  C5          	PUSH	BC
+  916 E5D6  D5          	PUSH	DE
+  917 E5D7  E5          	PUSH	HL
+  918 E5D8  3A FFFA     	LD	A,(MNFLG0)
+  919 E5DB  E6 04       	AND	04H
+  920 E5DD  32 FFFA     	LD	(MNFLG0),A
+  921 E5E0  D9          	EXX	
+  922 E5E1  08          	EX	AF,AF'
+  923 E5E2  DD E5       	PUSH	IX
+  924 E5E4  FD E5       	PUSH	IY
+  925 E5E6  21 FFC1     	LD	HL,BKBUFF
+  926 E5E9  ED 5B FFC4  	LD	DE,(BKADDR)
+  927 E5ED  01 0003     	LD	BC,0003H
+  928 E5F0  ED B0       	LDIR	
+Z80ASM SuperFast Relocating Macro Assembler     	    Z80ASM 1.30 Page  17
+MSMONR21Z80
+
+  929 E5F2  2A FFC4     	LD	HL,(BKADDR)
+  930 E5F5  3E 80       SVMEND: LD	A,80H
+  931 E5F7  32 FFC0     	LD	(STKTOP),A
+  932 E5FA  22 FFFE     	LD	(ADRBUF),HL
+  933 E5FD  31 FFC0     	LD	SP,STKTOP
+  934 E600  18 32       	JR	PRRLIN
+  935                   
+  936 E602  ED 7B FFE6  RESTOR: LD	SP,(BRKSP)
+  937 E606  2A FFFE     	LD	HL,(ADRBUF)
+  938 E609  E5          	PUSH	HL
+  939 E60A  2A FFFC     	LD	HL,(TEMPB0)
+  940 E60D  E5          	PUSH	HL
+  941 E60E  ED 73 FFE4  	LD	(TEMPSP),SP
+  942 E612  31 FFE8     	LD	SP,RSTSTK
+  943 E615  FD E1       	POP	IY
+  944 E617  DD E1       	POP	IX
+  945 E619  D9          	EXX	
+  946 E61A  08          	EX	AF,AF'
+  947 E61B  E1          	POP	HL
+  948 E61C  D1          	POP	DE
+  949 E61D  C1          	POP	BC
+  950 E61E  F1          	POP	AF
+  951 E61F  D9          	EXX	
+  952 E620  08          	EX	AF,AF'
+  953 E621  E1          	POP	HL
+  954 E622  D1          	POP	DE
+  955 E623  C1          	POP	BC
+  956 E624  F1          	POP	AF
+  957 E625  ED 47       	LD	I,A
+  958 E627  ED 7B FFE4  	LD	SP,(TEMPSP)
+  959 E62B  EA E631     	JP	PE,RETWEI
+  960 E62E  F1          	POP	AF
+  961 E62F  F3          	DI	
+  962 E630  C9          	RET	
+  963                   
+  964 E631  F1          RETWEI: POP	AF
+  965 E632  FB          	EI	
+  966 E633  C9          	RET	
+  967                   
+  968 E634  CD E676     PRRLIN: CALL	DMPLIN
+  969 E637  3A FFC0     	LD	A,(STKTOP)
+  970 E63A  47          	LD	B,A
+  971 E63B  AF          	XOR	A
+  972 E63C  32 FFC0     	LD	(STKTOP),A
+  973 E63F  21 FFC9     	LD	HL,SFFC9
+  974 E642  35          	DEC	(HL)
+  975 E643  28 07       	JR	Z,PRRCTL
+  976 E645  CD E006     	CALL	CSE
+  977 E648  20 02       	JR	NZ,PRRCTL
+  978 E64A  18 23       	JR	PCLF0
+  979                   
+  980 E64C  CD E70F     PRRCTL: CALL	CHRINE
+  981 E64F  FE 2E       	CP	2EH
+  982 E651  CA E06F     	JP	Z,MONRUN
+  983 E654  FE 0D       	CP	0DH
+  984 E656  28 15       	JR	Z,PRRCLF
+  985 E658  FE 20       	CP	20H
+  986 E65A  20 F0       	JR	NZ,PRRCTL
+Z80ASM SuperFast Relocating Macro Assembler     	    Z80ASM 1.30 Page  18
+MSMONR21Z80
+
+  987 E65C  AF          	XOR	A
+  988 E65D  BE          	CP	(HL)
+  989 E65E  36 00       	LD	(HL),00H
+  990 E660  20 EA       	JR	NZ,PRRCTL
+  991 E662  CD E71D     	CALL	CRLF
+  992 E665  CD E72C     	CALL	PRREGL
+  993 E668  3E 0B       	LD	A,0BH
+  994 E66A  C3 E454     	JP	SCMD1
+  995                   
+  996 E66D  36 01       PRRCLF: LD	(HL),01H
+  997 E66F  CD E71D     PCLF0:	CALL	CRLF
+  998 E672  7E          	LD	A,(HL)
+  999 E673  C3 E454     	JP	SCMD1
+ 1000                   
+ 1001 E676  2A FFFE     DMPLIN: LD	HL,(ADRBUF)
+ 1002 E679  CD E7DE     	CALL	PRNTHL
+ 1003 E67C  3A FFC6     	LD	A,(MNFLG1)
+ 1004 E67F  1F          	RRA	
+ 1005 E680  06 01       	LD	B,01H
+ 1006 E682  30 02       	JR	NC,DMPLN0
+ 1007 E684  06 0C       	LD	B,0CH
+ 1008 E686  21 FFFD     DMPLN0: LD	HL,TEMPB1
+ 1009 E689  7E          DLINLP: LD	A,(HL)
+ 1010 E68A  CD E73B     	CALL	PRHASC
+ 1011 E68D  2B          	DEC	HL
+ 1012 E68E  7E          	LD	A,(HL)
+ 1013 E68F  CD E7E3     	CALL	PRHXSP
+ 1014 E692  2B          	DEC	HL
+ 1015 E693  10 F4       	DJNZ	DLINLP
+ 1016 E695  C9          	RET	
+ 1017                   
+ 1018 E696  C5          DMPDAT: PUSH	BC
+ 1019 E697  E5          	PUSH	HL
+ 1020 E698  7E          DDAT0:	LD	A,(HL)
+ 1021 E699  CD E7E3     	CALL	PRHXSP
+ 1022 E69C  23          	INC	HL
+ 1023 E69D  10 F9       	DJNZ	DDAT0
+ 1024 E69F  CD E727     	CALL	SPACE
+ 1025 E6A2  CD E727     	CALL	SPACE
+ 1026 E6A5  E1          	POP	HL
+ 1027 E6A6  C1          	POP	BC
+ 1028 E6A7  7E          DDTASC: LD	A,(HL)
+ 1029 E6A8  E6 7F       	AND	7FH
+ 1030 E6AA  4F          	LD	C,A
+ 1031 E6AB  FE 20       	CP	20H
+ 1032 E6AD  38 04       	JR	C,PUTPER
+ 1033 E6AF  FE 7B       	CP	7BH
+ 1034 E6B1  38 02       	JR	C,DDTA0
+ 1035 E6B3  0E 2E       PUTPER: LD	C,2EH
+ 1036 E6B5  CD E00C     DDTA0:	CALL	COE
+ 1037 E6B8  23          	INC	HL
+ 1038 E6B9  10 EC       	DJNZ	DDTASC
+ 1039 E6BB  C9          	RET	
+ 1040                   
+ 1041 E6BC  50 43 20 20 REGLST: DB	50H,43H,20H,20H 	;PC..
+ 1042 E6C0  20 41 46 20 	DB	20H,41H,46H,20H 	;.AF.
+ 1043 E6C4  20 49 20 49 	DB	20H,49H,20H,49H 	;.I.I
+ 1044 E6C8  46 20 20 42 	DB	46H,20H,20H,42H 	;F..B
+Z80ASM SuperFast Relocating Macro Assembler     	    Z80ASM 1.30 Page  19
+MSMONR21Z80
+
+ 1045 E6CC  43 20 20 20 	DB	43H,20H,20H,20H 	;C...
+ 1046 E6D0  44 45 20 20 	DB	44H,45H,20H,20H 	;DE..
+ 1047 E6D4  20 48 4C 20 	DB	20H,48H,4CH,20H 	;.HL.
+ 1048 E6D8  20 41 27 46 	DB	20H,41H,27H,46H 	;.A'F
+ 1049 E6DC  27 20 42 27 	DB	27H,20H,42H,27H 	;'.B'
+ 1050 E6E0  43 27 20 44 	DB	43H,27H,20H,44H 	;C'.D
+ 1051 E6E4  27 45 27 20 	DB	27H,45H,27H,20H 	;'E'.
+ 1052 E6E8  48 27 4C 27 	DB	48H,27H,4CH,27H 	;H'L'
+ 1053 E6EC  20 20 49 58 	DB	20H,20H,49H,58H 	;..IX
+ 1054 E6F0  20 20 20 49 	DB	20H,20H,20H,49H 	;...I
+ 1055 E6F4  59 20 20 20 	DB	59H,20H,20H,20H 	;Y...
+ 1056 E6F8  53 50 0D 0A 	DB	53H,50H,0DH,0AH 	;SP..
+ 1057 E6FC  03          	DB	03H			;.
+ 1058                   
+ 1059 E6FD  DB 7D       MCONST: IN	A,(CSTAT)
+ 1060 E6FF  E6 02       	AND	02H
+ 1061 E701  C8          	RET	Z
+ 1062 E702  3E FF       	LD	A,0FFH
+ 1063 E704  C9          	RET	
+ 1064                   
+ 1065 E705  CD E6FD     MCONIN: CALL	MCONST
+ 1066 E708  28 FB       	JR	Z,MCONIN
+ 1067 E70A  DB 7C       	IN	A,(CDATA)
+ 1068 E70C  E6 7F       	AND	7FH
+ 1069 E70E  C9          	RET	
+ 1070                   
+ 1071 E70F  CD E009     CHRINE: CALL	CIE
+ 1072 E712  4F          	LD	C,A
+ 1073 E713  DB 7D       MCONOT: IN	A,(CSTAT)
+ 1074 E715  E6 01       	AND	01H
+ 1075 E717  28 FA       	JR	Z,MCONOT
+ 1076 E719  79          	LD	A,C
+ 1077 E71A  D3 7C       	OUT	(CDATA),A
+ 1078 E71C  C9          	RET	
+ 1079                   
+ 1080 E71D  0E 0D       CRLF:	LD	C,0DH
+ 1081 E71F  CD E00C     	CALL	COE
+ 1082 E722  0E 0A       	LD	C,0AH
+ 1083 E724  C3 E00C     	JP	COE
+ 1084                   
+ 1085 E727  0E 20       SPACE:	LD	C,20H
+ 1086 E729  C3 E00C     	JP	COE
+ 1087                   
+ 1088 E72C  21 E6BC     PRREGL: LD	HL,REGLST
+ 1089 E72F  7E          PRLOOP: LD	A,(HL)
+ 1090 E730  FE 03       	CP	03H
+ 1091 E732  C8          	RET	Z
+ 1092 E733  4F          	LD	C,A
+ 1093 E734  CD E00C     	CALL	COE
+ 1094 E737  23          	INC	HL
+ 1095 E738  18 F5       	JR	PRLOOP
+ 1096                   
+ 1097 E73A  00          	NOP	
+ 1098 E73B  F5          PRHASC: PUSH	AF
+ 1099 E73C  0F          	RRCA	
+ 1100 E73D  0F          	RRCA	
+ 1101 E73E  0F          	RRCA	
+ 1102 E73F  0F          	RRCA	
+Z80ASM SuperFast Relocating Macro Assembler     	    Z80ASM 1.30 Page  20
+MSMONR21Z80
+
+ 1103 E740  CD E744     	CALL	PRHAS0
+ 1104 E743  F1          	POP	AF
+ 1105 E744  E6 0F       PRHAS0: AND	0FH
+ 1106 E746  C6 90       	ADD	90H
+ 1107 E748  27          	DAA	
+ 1108 E749  CE 40       	ADC	40H
+ 1109 E74B  27          	DAA	
+ 1110 E74C  4F          	LD	C,A
+ 1111 E74D  C3 E00C     	JP	COE
+ 1112                   
+ 1113 E750  D6 30       HEXTBI: SUB	30H
+ 1114 E752  FE 0A       	CP	0AH
+ 1115 E754  F8          	RET	M
+ 1116 E755  D6 07       	SUB	07H
+ 1117 E757  C9          	RET	
+ 1118                   
+ 1119 E758  FE 30       ISHEX:	CP	30H
+ 1120 E75A  38 0E       	JR	C,ISHEXF
+ 1121 E75C  FE 3A       	CP	3AH
+ 1122 E75E  38 08       	JR	C,ISHEXT
+ 1123 E760  FE 40       	CP	40H
+ 1124 E762  38 06       	JR	C,ISHEXF
+ 1125 E764  FE 47       	CP	47H
+ 1126 E766  30 02       	JR	NC,ISHEXF
+ 1127 E768  AF          ISHEXT: XOR	A
+ 1128 E769  C9          	RET	
+ 1129                   
+ 1130 E76A  AF          ISHEXF: XOR	A
+ 1131 E76B  3C          	INC	A
+ 1132 E76C  C9          	RET	
+ 1133                   
+ 1134 E76D  FE 20       CKCTLI: CP	20H
+ 1135 E76F  C8          	RET	Z
+ 1136 E770  FE 5E       	CP	5EH
+ 1137 E772  28 08       	JR	Z,STCRLF
+ 1138 E774  FE 2E       	CP	2EH
+ 1139 E776  CA E06F     	JP	Z,MONRUN
+ 1140 E779  FE 0D       	CP	0DH
+ 1141 E77B  C0          	RET	NZ
+ 1142 E77C  C5          STCRLF: PUSH	BC
+ 1143 E77D  CD E71D     	CALL	CRLF
+ 1144 E780  C1          	POP	BC
+ 1145 E781  AF          	XOR	A
+ 1146 E782  C9          	RET	
+ 1147                   
+ 1148 E783  E5 E5 E5 E5 	DB	0E5H,0E5H,0E5H,0E5H	;eeee
+ 1149 E787  E5          	DB	0E5H			;e
+ 1150                   
+ 1151 E788  21 0000     RDINPT: LD	HL,0000H
+ 1152 E78B  45          	LD	B,L
+ 1153 E78C  CD E70F     GETINP: CALL	CHRINE
+ 1154 E78F  04          	INC	B
+ 1155 E790  CD E76D     	CALL	CKCTLI
+ 1156 E793  C8          	RET	Z
+ 1157 E794  CD E758     	CALL	ISHEX
+ 1158 E797  C0          	RET	NZ
+ 1159 E798  79          	LD	A,C
+ 1160 E799  CD E750     	CALL	HEXTBI
+Z80ASM SuperFast Relocating Macro Assembler     	    Z80ASM 1.30 Page  21
+MSMONR21Z80
+
+ 1161 E79C  29          	ADD	HL,HL
+ 1162 E79D  29          	ADD	HL,HL
+ 1163 E79E  29          	ADD	HL,HL
+ 1164 E79F  29          	ADD	HL,HL
+ 1165 E7A0  85          	ADD	A,L
+ 1166 E7A1  6F          	LD	L,A
+ 1167 E7A2  18 E8       	JR	GETINP
+ 1168                   
+ 1169 E7A4  AF          BUFINP: XOR	A
+ 1170 E7A5  21 FFD0     	LD	HL,BUF0
+ 1171 E7A8  E5          	PUSH	HL
+ 1172 E7A9  DD E1       	POP	IX
+ 1173 E7AB  77          	LD	(HL),A
+ 1174 E7AC  01 0009     	LD	BC,0009H
+ 1175 E7AF  11 FFD1     	LD	DE,BUF01
+ 1176 E7B2  ED B0       	LDIR	
+ 1177 E7B4  32 FFC7     	LD	(PARMCT),A
+ 1178 E7B7  CD E788     INTINP: CALL	RDINPT
+ 1179 E7BA  C2 E437     	JP	NZ,BADINP
+ 1180 E7BD  79          	LD	A,C
+ 1181 E7BE  32 FFC8     	LD	(CHARIN),A
+ 1182 E7C1  FE 20       	CP	20H
+ 1183 E7C3  28 02       	JR	Z,SPINP
+ 1184 E7C5  05          	DEC	B
+ 1185 E7C6  C8          	RET	Z
+ 1186 E7C7  DD 75 00    SPINP:	LD	(IX+0),L
+ 1187 E7CA  DD 74 01    	LD	(IX+1),H
+ 1188 E7CD  3A FFC7     	LD	A,(PARMCT)
+ 1189 E7D0  3C          	INC	A
+ 1190 E7D1  32 FFC7     	LD	(PARMCT),A
+ 1191 E7D4  DD 23       	INC	IX
+ 1192 E7D6  DD 23       	INC	IX
+ 1193 E7D8  79          	LD	A,C
+ 1194 E7D9  FE 20       	CP	20H
+ 1195 E7DB  28 DA       	JR	Z,INTINP
+ 1196 E7DD  C9          	RET	
+ 1197                   
+ 1198 E7DE  7C          PRNTHL: LD	A,H
+ 1199 E7DF  CD E73B     	CALL	PRHASC
+ 1200 E7E2  7D          	LD	A,L
+ 1201 E7E3  C5          PRHXSP: PUSH	BC
+ 1202 E7E4  CD E73B     	CALL	PRHASC
+ 1203 E7E7  CD E727     	CALL	SPACE
+ 1204 E7EA  C1          	POP	BC
+ 1205 E7EB  C9          	RET	
+ 1206                   
+ 1207                   	END
+ 0 Error(s) Detected.
+ 2028 Absolute Bytes. 197 Symbols Detected.
+
